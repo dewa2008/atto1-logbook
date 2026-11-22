@@ -79,7 +79,7 @@
                 endEpoch: num(s.endEpoch, 0, 1e14), endTimestamp: str(s.endTimestamp, RE_TS),
                 durationSeconds: num(s.durationSeconds, 0, 1e8), durationFormatted: str(s.durationFormatted, RE_DUR),
                 endSOC: num(s.endSOC, 0, 100), deltaSOC: num(s.deltaSOC, -100, 100),
-                endMeter: numOrNull(s.endMeter, 0, 1e9), deltaKwh: numOrNull(s.deltaKwh, 0, 1e6),
+                endMeter: numOrNull(s.endMeter, 0, 1e9), topupKwh: numOrNull(s.topupKwh, 0, 1e6), deltaKwh: numOrNull(s.deltaKwh, 0, 1e6),
                 costRp: numOrNull(s.costRp, 0, 1e12), efficiencyPct: numOrNull(s.efficiencyPct, 0, 100),
                 endPhotoData: photoOrEmpty(s.endPhotoData)
             });
@@ -93,7 +93,7 @@
             if (!s) return;
             const isStart = which === 'start';
             viewPhotoFullscreen(isStart ? s.startPhotoData : s.endPhotoData,
-                `Sesi #${n} — Meteran ${isStart ? 'Awal' : 'Akhir'} (${fmtKwh(isStart ? s.startMeter : s.endMeter)})`);
+                `Sesi #${n} — Sisa Token ${isStart ? 'Awal' : 'Akhir'} (${fmtKwh(isStart ? s.startMeter : s.endMeter)})`);
         }
 
         // =====================================================================
@@ -352,7 +352,7 @@
                 data.blocks.forEach(b => (b.paragraphs || []).forEach(pa => (pa.lines || []).forEach(l => (l.words || []).forEach(w => words.push(w)))));
             }
             const cands = words.map(w => ({ t: String(w.text || '').replace(/,/g, '.').replace(/[^0-9.]/g, ''), h: w.bbox ? (w.bbox.y1 - w.bbox.y0) : 0, c: w.confidence || 0 }))
-                .filter(x => /^\d{3,7}(\.\d{1,3})?$/.test(x.t))
+                .filter(x => /^\d{1,7}(\.\d{1,3})?$/.test(x.t) && x.t.replace('.', '').length >= 3)
                 .sort((a, b) => (b.h - a.h) || (b.c - a.c));
             return cands.length ? cands[0].t : null;
         }
@@ -422,7 +422,7 @@
             document.getElementById('input-start-soc').value = estSoc;
 
             const lastMeter = getLastMeterReading();
-            document.getElementById('input-start-meter').value = lastMeter !== '' ? lastMeter : '';
+            document.getElementById('input-start-meter').value = '';
             document.getElementById('input-start-meter').dataset.manual = '0';
             setOcrStatus('start-ocr-status', '');
 
@@ -536,11 +536,12 @@
             const meterInput = document.getElementById('input-stop-meter');
             meterInput.dataset.manual = '0';
             meterInput.value = activeSession.startMeter !== null
-                ? (activeSession.startMeter + elapsedHours * CHARGER_KW).toFixed(2) : '';
+                ? Math.max(0, activeSession.startMeter - elapsedHours * CHARGER_KW).toFixed(2) : '';
+            document.getElementById('input-stop-topup').value = '';
 
             document.getElementById('stop-modal-live-ts').textContent = formatTimestampWIB(new Date());
             document.getElementById('stop-modal-start-ref').textContent =
-                `SOC ${activeSession.startSOC}% • Meteran ${fmtKwh(activeSession.startMeter)}`;
+                `SOC ${activeSession.startSOC}% • Sisa token ${fmtKwh(activeSession.startMeter)}`;
 
             validateStopForm();
             document.getElementById('modal-stop-charge').classList.remove('hidden');
@@ -573,19 +574,24 @@
 
             const endSoc = parseFloat(document.getElementById('input-stop-soc').value);
             const endMeter = readMeterInput('input-stop-meter');
+            const topupRaw = readMeterInput('input-stop-topup');
+            const topup = topupRaw === null ? 0 : topupRaw;
             const hasPhoto = Boolean(stopPhotoBase64);
             const startMeter = activeSession.startMeter;
+            // Prepaid (token) meter: the display counts DOWN while charging.
+            const used = (endMeter !== null && !Number.isNaN(endMeter) && startMeter !== null && !Number.isNaN(topup))
+                ? startMeter + topup - endMeter : null;
 
             const isSocValid = !isNaN(endSoc) && endSoc >= activeSession.startSOC && endSoc <= 100;
-            const meterOk = endMeter !== null && !Number.isNaN(endMeter) && (startMeter === null || endMeter >= startMeter);
-            const meterBad = Number.isNaN(endMeter) || (endMeter !== null && startMeter !== null && endMeter < startMeter);
+            const meterOk = endMeter !== null && !Number.isNaN(endMeter) && !Number.isNaN(topup) && (used === null || used >= 0);
+            const meterBad = Number.isNaN(endMeter) || Number.isNaN(topup) || (used !== null && used < 0);
 
             const previewBox = document.getElementById('stop-calc-preview');
             if (!isNaN(endSoc) && endSoc >= activeSession.startSOC) {
                 const deltaSoc = Math.max(0, endSoc - activeSession.startSOC);
                 document.getElementById('calc-delta-soc').textContent = `+${deltaSoc}% (${activeSession.startSOC}% ➔ ${endSoc}%)`;
-                if (meterOk && startMeter !== null) {
-                    const deltaKwh = endMeter - startMeter;
+                if (meterOk && used !== null) {
+                    const deltaKwh = used;
                     const batteryKwhGained = (deltaSoc / 100) * BATTERY_KWH;
                     const efficiencyPct = deltaKwh > 0 ? Math.min(100, (batteryKwhGained / deltaKwh) * 100) : 0;
                     document.getElementById('calc-delta-kwh').textContent = `${deltaKwh.toFixed(2)} kWh`;
@@ -610,14 +616,14 @@
                 msgBox.textContent = '⏳ Sedang membaca angka dari foto...';
             } else if (allValid) {
                 msgBox.className = 'text-xs font-bold text-emerald-900 bg-emerald-50 border-2 border-emerald-700 rounded-lg p-2.5';
-                msgBox.textContent = (meterOk && startMeter !== null)
+                msgBox.textContent = (meterOk && used !== null)
                     ? '✅ Validasi lengkap! Klik Simpan & Akhiri Sesi Cas.'
-                    : '✅ Bisa disimpan. Biaya & kWh tidak dihitung karena angka meteran awal/akhir tidak lengkap.';
+                    : '✅ Bisa disimpan. Biaya & kWh tidak dihitung karena angka sisa token awal/akhir tidak lengkap.';
             } else {
                 msgBox.className = 'text-xs font-bold text-red-700 bg-red-50 border-2 border-red-700 rounded-lg p-2.5';
-                msgBox.textContent = meterBad && startMeter !== null
-                    ? `⚠️ Angka meteran akhir harus ≥ ${startMeter} kWh.`
-                    : `⚠️ Isi Baterai Akhir (${activeSession.startSOC}%–100%), lalu isi Angka Meteran Akhir ATAU ambil Foto Meteran.`;
+                msgBox.textContent = meterBad && used !== null
+                    ? `⚠️ Sisa token akhir harus ≤ ${startMeter} kWh (token berkurang saat dipakai). Kalau sempat isi token, isi kolom "Token diisi".`
+                    : `⚠️ Isi Baterai Akhir (${activeSession.startSOC}%–100%), lalu isi Sisa Token Akhir ATAU ambil Foto Meteran.`;
             }
         }
 
@@ -626,16 +632,18 @@
 
             const endSoc = parseInt(document.getElementById('input-stop-soc').value, 10);
             const endMeter = readMeterInput('input-stop-meter');
+            const topupRaw = readMeterInput('input-stop-topup');
+            const topup = topupRaw === null ? 0 : topupRaw;
             const startMeter = activeSession.startMeter;
-            if (isNaN(endSoc) || Number.isNaN(endMeter) || ocrBusy) return;
+            if (isNaN(endSoc) || Number.isNaN(endMeter) || Number.isNaN(topup) || ocrBusy) return;
             if (endMeter === null && !stopPhotoBase64) return;
-            if (endMeter !== null && startMeter !== null && endMeter < startMeter) return;
+            const hasKwh = endMeter !== null && startMeter !== null;
+            if (hasKwh && startMeter + topup - endMeter < 0) return;
 
             const now = new Date();
             const durationSeconds = Math.max(1, Math.round((now.getTime() - activeSession.startEpoch) / 1000));
             const deltaSoc = endSoc - activeSession.startSOC;
-            const hasKwh = endMeter !== null && startMeter !== null;
-            const deltaKwh = hasKwh ? Number((endMeter - startMeter).toFixed(3)) : null;
+            const deltaKwh = hasKwh ? Number((startMeter + topup - endMeter).toFixed(3)) : null;
             const costRp = hasKwh ? deltaKwh * PLN_TARIFF_R2 : null;
             const batteryKwhGained = (deltaSoc / 100) * BATTERY_KWH;
             const efficiencyPct = (hasKwh && deltaKwh > 0) ? Number(Math.min(100, (batteryKwhGained / deltaKwh) * 100).toFixed(1)) : null;
@@ -649,6 +657,7 @@
                 endSOC: endSoc,
                 deltaSOC: deltaSoc,
                 endMeter: endMeter,
+                topupKwh: topupRaw === null ? null : topup,
                 deltaKwh: deltaKwh,
                 costRp: costRp,
                 efficiencyPct: efficiencyPct,
@@ -722,7 +731,7 @@
                     startSOC = realized.startSOC;
                     endSOC = realized.endSOC;
                     durationStr = `${realized.durationFormatted} (${fmtKwh(realized.deltaKwh)})`;
-                    noteStr = `Terealisasi: ${realized.startSOC}% ➔ ${realized.endSOC}% • Biaya ${fmtRp(realized.costRp)} • Meteran ${fmtKwh(realized.startMeter)} ➔ ${fmtKwh(realized.endMeter)}.`;
+                    noteStr = `Terealisasi: ${realized.startSOC}% ➔ ${realized.endSOC}% • Biaya ${fmtRp(realized.costRp)} • Sisa token ${fmtKwh(realized.startMeter)} ➔ ${fmtKwh(realized.endMeter)}${realized.topupKwh ? ` (isi token ${fmtKwh(realized.topupKwh)})` : ''}.`;
                 } else {
                     const isChargeDay = (i % 2 === 0);
                     if (isChargeDay) {
@@ -844,7 +853,7 @@
                 const photo = isStart ? s.startPhotoData : s.endPhotoData;
                 const meter = isStart ? s.startMeter : s.endMeter;
                 const bg = isStart ? 'bg-[#F0F9FF]' : 'bg-[#FEF9C3]';
-                const label = isStart ? 'Meteran Awal' : 'Meteran Akhir';
+                const label = isStart ? 'Sisa Token Awal' : 'Sisa Token Akhir';
                 const media = photo
                     ? `<img src="${photo}" alt="Foto ${label}" onclick="viewSessionPhoto('${s.id}', '${which}', ${n})" class="w-full h-40 object-cover rounded-lg border-2 border-[#111827] cursor-pointer">`
                     : `<div class="w-full h-40 rounded-lg border-2 border-dashed border-[#111827] flex items-center justify-center text-xs font-bold text-neutral-500">Tanpa foto (angka diketik)</div>`;

@@ -15,7 +15,7 @@
     <link rel="manifest" href="./manifest.webmanifest">
     <link rel="icon" type="image/png" href="./icons/favicon.png">
     <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
-    <link rel="stylesheet" href="./styles.css?v=b9be3a934e">
+    <link rel="stylesheet" href="./styles.css?v=ca94f068c9">
 </head>
 <body class="min-h-screen pb-24">
 
@@ -81,7 +81,7 @@
                             Estimasi Baterai Mobil Saat Ini: <span id="hero-current-soc" class="font-mono-code bg-[#FEF08A] px-2 py-0.5 rounded border-2 border-[#111827]">38%</span>
                         </h2>
                         <p id="hero-recommendation-text" class="text-xs sm:text-sm font-semibold text-neutral-700 leading-relaxed">
-                            Rencana malam ini: Colok charger <b>1.3 kW (6A)</b>, input sisa baterai, lalu ketik angka meteran atau cukup foto meteran (angka dibaca otomatis).
+                            Rencana malam ini: Colok charger <b>1.3 kW (6A)</b>, input sisa baterai, lalu ketik sisa kWh token atau cukup foto meteran (angka dibaca otomatis).
                         </p>
                     </div>
 
@@ -393,7 +393,7 @@
                 <!-- Field B: Angka Meteran Listrik Awal (kWh) -->
                 <div>
                     <label for="input-start-meter" class="block text-xs font-extrabold uppercase mb-1">
-                        2. Angka Meteran Awal (kWh) <span class="text-neutral-500 normal-case">— ketik ini ATAU foto</span>
+                        2. Sisa kWh Token Awal <span class="text-neutral-500 normal-case">— ketik ini ATAU foto meteran</span>
                     </label>
                     <div class="relative">
                         <input
@@ -402,7 +402,7 @@
                             min="0"
                             step="0.01"
                             inputmode="decimal" oninput="this.dataset.manual=\'1\'; validateStartForm()"
-                            placeholder="Contoh: 1452.80"
+                            placeholder="Contoh: 85.30"
                             class="nb-input w-full px-3.5 py-2.5 text-base font-mono-code pr-14"
                         >
                         <span class="absolute right-4 top-1/2 -translate-y-1/2 font-mono-code font-extrabold text-xs text-neutral-500">kWh</span>
@@ -506,7 +506,7 @@
                 <!-- Field B: Angka Meteran Listrik Akhir (kWh) -->
                 <div>
                     <label for="input-stop-meter" class="block text-xs font-extrabold uppercase mb-1">
-                        2. Angka Meteran Akhir (kWh) <span class="text-neutral-500 normal-case">— ketik ini ATAU foto</span>
+                        2. Sisa kWh Token Akhir <span class="text-neutral-500 normal-case">— ketik ini ATAU foto meteran</span>
                     </label>
                     <div class="relative">
                         <input
@@ -515,11 +515,20 @@
                             min="0"
                             step="0.01"
                             inputmode="decimal" oninput="this.dataset.manual=\'1\'; validateStopForm()"
-                            placeholder="Harus >= meteran awal"
+                            placeholder="Contoh: 72.10 (lebih kecil dari awal)"
                             class="nb-input w-full px-3.5 py-2.5 text-base font-mono-code pr-14"
                         >
                         <span class="absolute right-4 top-1/2 -translate-y-1/2 font-mono-code font-extrabold text-xs text-neutral-500">kWh</span>
                     </div>
+                </div>
+
+                <!-- Optional: token top-up during the session -->
+                <div>
+                    <label for="input-stop-topup" class="block text-xs font-extrabold uppercase mb-1">
+                        Token diisi selama cas (kWh) <span class="text-neutral-500 normal-case">— kosongkan kalau tidak isi token</span>
+                    </label>
+                    <input type="number" id="input-stop-topup" min="0" step="0.01" inputmode="decimal" oninput="validateStopForm()"
+                        placeholder="Contoh: 0" class="nb-input w-full px-3.5 py-2.5 text-base font-mono-code">
                 </div>
 
                 <!-- Field C: Wajib Foto Meteran Listrik Akhir -->
@@ -577,7 +586,7 @@
 
                 <!-- Validation Message -->
                 <div id="stop-validation-msg" class="text-xs font-bold text-red-700 bg-red-50 border-2 border-red-700 rounded-lg p-2.5">
-                    ⚠️ Isi Baterai Akhir (%), lalu isi Angka Meteran Akhir ATAU ambil Foto Meteran.
+                    ⚠️ Isi Baterai Akhir (%), lalu isi Sisa Token Akhir ATAU ambil Foto Meteran.
                 </div>
 
                 <!-- Confirm Stop Button -->
@@ -641,6 +650,6 @@
     </div>
 
         <script src="./ocr/tesseract.min.js"></script>
-    <script src="./app.js?v=b9be3a934e"></script>
+    <script src="./app.js?v=ca94f068c9"></script>
 </body>
 </html>
