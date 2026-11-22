@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta name="referrer" content="no-referrer">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+    <title>BYD Atto 1 Charge Tracker & SoH Logbook</title>
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Atto 1 Cas">
+    <meta name="theme-color" content="#BEF264">
+    <meta name="description" content="Logbook pengecasan BYD Atto 1 Dynamic (1.3 kW / 5.500 VA) dengan bukti foto meteran listrik, timestamp otomatis, dan jadwal SoH 1 tahun.">
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="icon" type="image/png" href="./icons/favicon.png">
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+    <link rel="stylesheet" href="./styles.css?v=6861a18cdf">
+</head>
+<body class="min-h-screen pb-24">
+
+    <!-- Toast Banner (No alert/confirm used) -->
+    <div id="toast" class="fixed top-4 left-4 right-4 sm:left-auto sm:right-5 sm:max-w-md z-[70] hidden nb-card bg-[#FDE047] p-4">
+        <div class="flex items-start justify-between gap-3">
+            <div>
+                <p id="toast-title" class="font-display font-bold text-sm uppercase tracking-wider text-[#111827]">INFO</p>
+                <p id="toast-body" class="text-xs font-semibold mt-1 text-[#111827] leading-relaxed"></p>
+            </div>
+            <button onclick="hideToast()" class="font-extrabold text-xs px-2.5 py-1 border-2 border-[#111827] rounded-lg bg-white">✕</button>
+        </div>
+    </div>
+
+    <!-- Top App Header -->
+    <header class="bg-[#BEF264] border-b-4 border-[#111827] sticky top-0 z-30">
+        <div class="max-w-6xl mx-auto px-4 py-3.5 flex items-center justify-between gap-3">
+            <div class="flex items-center gap-3">
+                <div class="w-11 h-11 bg-[#111827] text-[#BEF264] rounded-xl flex items-center justify-center font-bold text-2xl border-2 border-[#111827] shrink-0">
+                    ⚡
+                </div>
+                <div>
+                    <div class="flex flex-wrap items-center gap-1.5">
+                        <h1 class="font-display text-base sm:text-xl font-bold tracking-tight text-[#111827]">
+                            ATTO 1 CHARGE LOGBOOK
+                        </h1>
+                        <span class="nb-badge bg-[#FDE047] px-2 py-0.5 text-[10px] sm:text-xs">1.3 kW • 5.500 VA</span>
+                    </div>
+                    <p id="header-clock" class="font-mono-code text-[11px] sm:text-xs font-bold text-[#111827]/85 mt-0.5">
+                        Memuat waktu WIB...
+                    </p>
+                </div>
+            </div>
+
+            <!-- Install Android PWA Button & ICS Reminder -->
+            <div class="flex items-center gap-2 shrink-0">
+                <button onclick="openInstallModal()" class="nb-btn bg-[#111827] text-[#BEF264] px-3 py-2 text-xs flex items-center gap-1.5">
+                    <span>📲</span>
+                    <span class="hidden sm:inline">Pasang di Android</span>
+                    <span class="sm:hidden">Install HP</span>
+                </button>
+                <button onclick="downloadICS()" title="Unduh Pengingat Otomatis Kalender" class="nb-btn bg-[#7DD3FC] text-[#111827] px-3 py-2 text-xs flex items-center gap-1">
+                    <span>⏰</span>
+                    <span class="hidden md:inline">Alarm .ICS</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-6xl mx-auto px-4 pt-5 space-y-5">
+
+        <!-- HERO ACTION AREA: Either "READY TO START CHARGE" or "ACTIVE CHARGING SESSION" -->
+        <section id="hero-action-section">
+            <!-- State 1: Idle / Ready to Start Charge -->
+            <div id="idle-charge-card" class="nb-card p-5 bg-[#FFFFFF] border-4">
+                <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                    <div class="space-y-1.5">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="nb-badge bg-[#BEF264] px-2.5 py-0.5">SIAP REALISASI PENGECASAN</span>
+                            <span id="today-schedule-pill" class="nb-badge bg-[#FDE047] px-2.5 py-0.5">Hari Ini: Min, 22 Nov 2026</span>
+                        </div>
+                        <h2 class="font-display text-xl sm:text-2xl font-bold text-[#111827]">
+                            Estimasi Baterai Mobil Saat Ini: <span id="hero-current-soc" class="font-mono-code bg-[#FEF08A] px-2 py-0.5 rounded border-2 border-[#111827]">38%</span>
+                        </h2>
+                        <p id="hero-recommendation-text" class="text-xs sm:text-sm font-semibold text-neutral-700 leading-relaxed">
+                            Rencana malam ini: Colok charger <b>1.3 kW (6A)</b> dengan wajib input sisa baterai & foto meteran listrik kWh awal.
+                        </p>
+                    </div>
+
+                    <div class="shrink-0">
+                        <button onclick="openStartChargeModal()" class="nb-btn bg-[#BEF264] hover:bg-[#A3E635] text-[#111827] w-full lg:w-auto px-6 py-4 text-base sm:text-lg flex items-center justify-center gap-2.5">
+                            <span class="text-2xl">🔌</span>
+                            <span>MULAI CAS (START CHARGE)</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- State 2: Active Charging Session Card (Visible when charging is in progress) -->
+            <div id="active-charge-card" class="hidden nb-card p-5 bg-[#FEF08A] border-4">
+                <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b-2 border-[#111827]">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span class="inline-flex items-center gap-1.5 nb-badge bg-[#EF4444] text-white px-2.5 py-0.5">
+                                <span class="w-2.5 h-2.5 rounded-full bg-white live-dot"></span>
+                                SEDANG MENGISI DAYA (LIVE)
+                            </span>
+                            <span id="active-target-badge" class="nb-badge bg-[#111827] text-[#BEF264] px-2.5 py-0.5">Target: 80%</span>
+                        </div>
+                        <div class="mt-2 flex flex-wrap items-baseline gap-3">
+                            <div id="active-live-timer" class="font-mono-code text-3xl sm:text-4xl font-extrabold text-[#111827]">
+                                00:00:00
+                            </div>
+                            <div class="text-xs sm:text-sm font-bold text-neutral-800">
+                                Estimasi SOC sekarang: <span id="active-est-soc" class="font-mono-code bg-white px-2 py-0.5 rounded border border-black">38.0%</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button onclick="openStopChargeModal()" class="nb-btn bg-[#EF4444] hover:bg-[#DC2626] text-white w-full lg:w-auto px-6 py-4 text-base sm:text-lg flex items-center justify-center gap-2">
+                        <span class="text-xl">🛑</span>
+                        <span>AKHIRI CAS (STOP CHARGE)</span>
+                    </button>
+                </div>
+
+                <!-- Active Session Details & Start Meter Photo -->
+                <div class="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-4">
+                    <div class="nb-card-sm p-3 bg-white">
+                        <div class="text-[11px] font-extrabold uppercase text-neutral-500">Timestamp Mulai</div>
+                        <div id="active-start-ts" class="font-mono-code text-xs sm:text-sm font-extrabold mt-1">—</div>
+                    </div>
+                    <div class="nb-card-sm p-3 bg-white">
+                        <div class="text-[11px] font-extrabold uppercase text-neutral-500">Baterai & Meteran Awal</div>
+                        <div id="active-start-values" class="font-mono-code text-xs sm:text-sm font-extrabold mt-1">—</div>
+                    </div>
+                    <div class="nb-card-sm p-3 bg-white">
+                        <div class="text-[11px] font-extrabold uppercase text-neutral-500">Estimasi Selesai Target</div>
+                        <div id="active-est-finish" class="font-mono-code text-xs sm:text-sm font-extrabold text-emerald-800 mt-1">—</div>
+                    </div>
+                    <div class="nb-card-sm p-2.5 bg-white flex items-center justify-between gap-2">
+                        <div>
+                            <div class="text-[11px] font-extrabold uppercase text-neutral-500">Foto Meteran Awal</div>
+                            <button onclick="viewPhotoFullscreen(activeSession?.startPhotoData, 'Foto Meteran Awal — ' + activeSession?.startTimestamp)" class="text-xs font-extrabold underline text-blue-700 mt-1">
+                                🔍 Perbesar Foto
+                            </button>
+                        </div>
+                        <img id="active-start-thumb" src="" alt="Meteran Awal" onclick="viewPhotoFullscreen(activeSession?.startPhotoData, 'Foto Meteran Awal')" class="w-12 h-12 object-cover rounded-lg border-2 border-[#111827] cursor-pointer shrink-0">
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 4 Real-Time KPI Summary Cards -->
+        <section class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div class="nb-card p-3.5 sm:p-4 bg-[#FFFFFF]">
+                <div class="text-[11px] font-extrabold uppercase text-neutral-500">Total Sesi Realisasi</div>
+                <div id="kpi-total-sessions" class="font-display text-2xl sm:text-3xl font-bold font-mono-code mt-1">0 Sesi</div>
+                <p id="kpi-total-kwh" class="text-xs font-semibold text-neutral-700 mt-1">Total PLN: 0.00 kWh</p>
+            </div>
+
+            <div class="nb-card p-3.5 sm:p-4 bg-[#7DD3FC]">
+                <div class="text-[11px] font-extrabold uppercase">Total Biaya Listrik PLN</div>
+                <div id="kpi-total-cost" class="font-display text-2xl sm:text-3xl font-bold font-mono-code mt-1">Rp0</div>
+                <p class="text-xs font-semibold mt-1">Tarif R-2: Rp1.699,53/kWh</p>
+            </div>
+
+            <div class="nb-card p-3.5 sm:p-4 bg-[#BEF264]">
+                <div class="text-[11px] font-extrabold uppercase">Rata-rata Efisiensi Cas</div>
+                <div id="kpi-avg-eff" class="font-display text-2xl sm:text-3xl font-bold font-mono-code mt-1">92.0%</div>
+                <p class="text-xs font-semibold mt-1">kWh Masuk Baterai vs PLN</p>
+            </div>
+
+            <div class="nb-card p-3.5 sm:p-4 bg-[#FDE047]">
+                <div class="text-[11px] font-extrabold uppercase">Sisa Daya Rumah 5.500 VA</div>
+                <div class="font-display text-2xl sm:text-3xl font-bold font-mono-code mt-1">4.200 VA</div>
+                <p class="text-xs font-semibold mt-1">Charger 1.3 kW (6A) Sangat Aman</p>
+            </div>
+        </section>
+
+        <!-- Navigation Tabs (Mobile-Friendly Segmented Bar) -->
+        <nav class="grid grid-cols-3 gap-2.5">
+            <button id="tab-btn-schedule" onclick="switchTab('schedule')" class="nb-btn py-3 px-3 text-xs sm:text-sm bg-[#111827] text-[#BEF264] flex items-center justify-center gap-1.5">
+                <span>📅</span>
+                <span>Rencana 1 Tahun</span>
+            </button>
+            <button id="tab-btn-history" onclick="switchTab('history')" class="nb-btn py-3 px-3 text-xs sm:text-sm bg-[#FFFFFF] text-[#111827] flex items-center justify-center gap-1.5">
+                <span>📸</span>
+                <span>Riwayat & Bukti (<span id="tab-history-count">0</span>)</span>
+            </button>
+            <button id="tab-btn-backup" onclick="switchTab('backup')" class="nb-btn py-3 px-3 text-xs sm:text-sm bg-[#FFFFFF] text-[#111827] flex items-center justify-center gap-1.5">
+                <span>💾</span>
+                <span>Backup & PWA</span>
+            </button>
+        </nav>
+
+        <!-- TAB 1: 1-YEAR DYNAMIC SCHEDULE (SYNCED WITH REALIZATION) -->
+        <section id="tab-panel-schedule" class="space-y-4">
+            <!-- Filter Bar -->
+            <div class="nb-card p-4 bg-[#FFFFFF] grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                    <label for="sched-filter-type" class="block text-xs font-extrabold uppercase mb-1">Filter Status:</label>
+                    <select id="sched-filter-type" onchange="renderScheduleTable()" class="nb-input w-full px-3 py-2 text-xs sm:text-sm">
+                        <option value="ALL">Semua Hari (366 Hari)</option>
+                        <option value="REALIZED">Sudah Realisasi</option>
+                        <option value="CHARGE_80">Terjadwal Cas 80%</option>
+                        <option value="CALIBRATION_100">Kalibrasi LFP 100% (Sabtu)</option>
+                        <option value="REST">Hari Libur Cas</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="sched-filter-month" class="block text-xs font-extrabold uppercase mb-1">Filter Bulan:</label>
+                    <select id="sched-filter-month" onchange="renderScheduleTable()" class="nb-input w-full px-3 py-2 text-xs sm:text-sm">
+                        <option value="ALL">Semua Bulan (Nov 2026 – Nov 2027)</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="sched-search" class="block text-xs font-extrabold uppercase mb-1">Cari Tanggal / Hari:</label>
+                    <input type="text" id="sched-search" oninput="renderScheduleTable()" placeholder="Contoh: 22 Nov, Sabtu, Desember..." class="nb-input w-full px-3 py-2 text-xs sm:text-sm">
+                </div>
+            </div>
+
+            <!-- Schedule Table -->
+            <div class="nb-card overflow-hidden bg-[#FFFFFF]">
+                <div class="p-3.5 bg-[#111827] text-white flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                        <h3 class="font-display font-bold text-sm sm:text-base">
+                            JADWAL CAS OPTIMAL SoH (22 NOV 2026 – 22 NOV 2027)
+                        </h3>
+                        <p class="text-[11px] text-neutral-300">
+                            Otomatis menyesuaikan sisa baterai terakhir Anda. Hijau = Terealisasi • Biru = Target 80% • Kuning = Kalibrasi Sabtu 100%.
+                        </p>
+                    </div>
+                    <span id="sched-count-badge" class="nb-badge bg-[#BEF264] text-[#111827] px-2.5 py-1">366 Hari</span>
+                </div>
+
+                <div class="overflow-x-auto max-h-[600px]">
+                    <table class="w-full text-left border-collapse">
+                        <thead class="bg-[#FAF9F6] border-b-3 border-[#111827] sticky top-0 z-10 text-xs font-extrabold uppercase">
+                            <tr>
+                                <th class="py-3 px-3 border-r-2 border-[#111827] text-center w-14">Hari</th>
+                                <th class="py-3 px-3.5 border-r-2 border-[#111827] min-w-[165px]">Tanggal</th>
+                                <th class="py-3 px-3.5 border-r-2 border-[#111827] text-center">Status</th>
+                                <th class="py-3 px-3.5 border-r-2 border-[#111827] text-center">Baterai (%)</th>
+                                <th class="py-3 px-3.5 border-r-2 border-[#111827] text-center">Durasi / Realisasi</th>
+                                <th class="py-3 px-3.5 min-w-[200px]">Keterangan & Bukti</th>
+                            </tr>
+                        </thead>
+                        <tbody id="schedule-tbody" class="divide-y-2 divide-[#111827] text-xs sm:text-sm font-medium">
+                            <!-- Rendered via JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 2: HISTORY & METER PHOTO GALLERY -->
+        <section id="tab-panel-history" class="hidden space-y-4">
+            <div class="nb-card p-4 bg-[#FFFFFF] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                    <h3 class="font-display font-bold text-base sm:text-lg">
+                        RIWAYAT REALISASI & BUKTI FOTO METERAN PLN
+                    </h3>
+                    <p class="text-xs font-semibold text-neutral-600">
+                        Klik pada foto meteran awal atau akhir untuk memperbesar dan mengecek angka kWh meteran rumah Anda.
+                    </p>
+                </div>
+                <button onclick="openStartChargeModal()" class="nb-btn bg-[#BEF264] px-4 py-2 text-xs self-start sm:self-center">
+                    + Catat Sesi Cas Baru
+                </button>
+            </div>
+
+            <div id="history-list-container" class="space-y-4">
+                <!-- Populated dynamically -->
+            </div>
+        </section>
+
+        <!-- TAB 3: BACKUP JSON, STORAGE INFO & ANDROID PWA INSTALL GUIDE -->
+        <section id="tab-panel-backup" class="hidden space-y-5">
+            <!-- Data Persistence & JSON Backup/Restore -->
+            <div class="nb-card p-5 bg-[#FFFFFF] space-y-4">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                        <h3 class="font-display font-bold text-base sm:text-lg">
+                            1. Penyimpanan Permanen & Backup Data (JSON)
+                        </h3>
+                        <p class="text-xs font-semibold text-neutral-700 mt-0.5">
+                            Semua log sesi cas dan foto meteran terkompresi otomatis disimpan permanen di database lokal HP Anda (<b>IndexedDB</b>).
+                        </p>
+                    </div>
+                    <span id="storage-status-badge" class="nb-badge bg-[#BEF264] px-2.5 py-1">IndexedDB Aktif ✓</span>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                    <button onclick="exportBackupJSON()" class="nb-btn bg-[#7DD3FC] text-[#111827] p-4 text-left flex items-center justify-between">
+                        <div>
+                            <div class="font-extrabold text-sm">📤 Ekspor Backup Lengkap (.JSON)</div>
+                            <div class="text-xs font-semibold text-neutral-800 mt-0.5">Unduh seluruh riwayat, angka meteran & foto bukti.</div>
+                        </div>
+                        <span class="text-xl">💾</span>
+                    </button>
+
+                    <label class="nb-btn bg-[#FDE047] text-[#111827] p-4 text-left flex items-center justify-between cursor-pointer">
+                        <div>
+                            <div class="font-extrabold text-sm">📥 Pulihkan / Restore Backup (.JSON)</div>
+                            <div class="text-xs font-semibold text-neutral-800 mt-0.5">Impor file backup JSON dari perangkat sebelumnya.</div>
+                        </div>
+                        <span class="text-xl">📂</span>
+                        <input type="file" accept=".json,application/json" onchange="importBackupJSON(event)" class="hidden">
+                    </label>
+                </div>
+            </div>
+
+            <!-- Android Home Screen Installation Guide -->
+            <div class="nb-card p-5 bg-[#BEF264]/40 space-y-4">
+                <div class="flex items-center justify-between gap-2">
+                    <h3 class="font-display font-bold text-base sm:text-lg">
+                        2. Cara Pasang Sebagai Aplikasi Android di Layar Utama HP
+                    </h3>
+                    <span class="nb-badge bg-[#111827] text-[#BEF264] px-2.5 py-0.5">ANDROID PWA</span>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                    <div class="nb-card-sm p-3.5 bg-white">
+                        <div class="font-display font-bold text-sm mb-1">Langkah 1</div>
+                        <p class="font-semibold text-neutral-700">Buka halaman aplikasi ini menggunakan browser <b>Google Chrome</b> di HP Android Anda.</p>
+                    </div>
+                    <div class="nb-card-sm p-3.5 bg-white">
+                        <div class="font-display font-bold text-sm mb-1">Langkah 2</div>
+                        <p class="font-semibold text-neutral-700">Ketuk ikon <b>Titik Tiga (⋮)</b> di pojok kanan atas browser Chrome.</p>
+                    </div>
+                    <div class="nb-card-sm p-3.5 bg-white">
+                        <div class="font-display font-bold text-sm mb-1">Langkah 3</div>
+                        <p class="font-semibold text-neutral-700">Pilih <b>"Tambahkan ke Layar Utama"</b> atau <b>"Install Aplikasi"</b>. Ikon ⚡ akan muncul seperti aplikasi native!</p>
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap gap-2.5 pt-1">
+                    <button id="native-install-trigger" onclick="triggerNativePWAInstall()" class="nb-btn bg-[#111827] text-[#BEF264] px-4 py-2.5 text-xs">
+                        📲 Jalankan Prompt Install Android
+                    </button>
+                    <button onclick="downloadICS()" class="nb-btn bg-white text-[#111827] px-4 py-2.5 text-xs">
+                        📅 Unduh Pengingat Kalender Otomatis (.ICS)
+                    </button>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- ===================================================================== -->
+    <!-- MODAL 1: START CHARGE MODAL (STRICT VALIDATION + CAMERA CAPTURE)      -->
+    <!-- ===================================================================== -->
+    <div id="modal-start-charge" class="fixed inset-0 z-50 hidden bg-black/75 flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
+        <div class="nb-card w-full sm:max-w-lg bg-[#FFFFFF] rounded-b-none sm:rounded-b-2xl max-h-[94vh] overflow-y-auto">
+            <div class="p-4 bg-[#BEF264] border-b-3 border-[#111827] flex items-center justify-between sticky top-0 z-10">
+                <div>
+                    <span class="nb-badge bg-[#111827] text-[#BEF264] px-2 py-0.5 text-[10px]">LANGKAH 1 • WAJIB LENGKAP</span>
+                    <h3 class="font-display font-bold text-lg text-[#111827] mt-0.5">MULAI PENGECASAN (START CHARGE)</h3>
+                </div>
+                <button onclick="closeStartChargeModal()" class="nb-btn bg-white px-3 py-1.5 text-xs">✕</button>
+            </div>
+
+            <div class="p-4 sm:p-5 space-y-4">
+                <!-- Live Timestamp Preview -->
+                <div class="nb-card-sm p-3 bg-[#FAF9F6] flex items-center justify-between">
+                    <span class="text-xs font-extrabold uppercase text-neutral-600">Timestamp Mulai (Otomatis):</span>
+                    <span id="start-modal-live-ts" class="font-mono-code text-xs sm:text-sm font-extrabold text-[#111827]">
+                        2026-11-22 20:16:00 WIB
+                    </span>
+                </div>
+
+                <!-- Field A: Sisa Baterai Mobil (%) -->
+                <div>
+                    <label for="input-start-soc" class="block text-xs font-extrabold uppercase mb-1">
+                        1. Sisa Baterai Mobil Saat Ini (%) <span class="text-red-600">*WAJIB</span>
+                    </label>
+                    <div class="relative">
+                        <input
+                            type="number"
+                            id="input-start-soc"
+                            min="1"
+                            max="99"
+                            step="1"
+                            oninput="validateStartForm()"
+                            placeholder="Contoh: 38"
+                            class="nb-input w-full px-3.5 py-2.5 text-base font-mono-code pr-12"
+                        >
+                        <span class="absolute right-4 top-1/2 -translate-y-1/2 font-mono-code font-extrabold text-sm text-neutral-500">%</span>
+                    </div>
+                    <p id="start-target-info" class="text-[11px] font-bold text-emerald-800 mt-1">
+                        Target hari ini: Stop di 80% (Kalibrasi 100% khusus Sabtu malam).
+                    </p>
+                </div>
+
+                <!-- Field B: Angka Meteran Listrik Awal (kWh) -->
+                <div>
+                    <label for="input-start-meter" class="block text-xs font-extrabold uppercase mb-1">
+                        2. Angka Meteran Listrik Awal (kWh) <span class="text-red-600">*WAJIB</span>
+                    </label>
+                    <div class="relative">
+                        <input
+                            type="number"
+                            id="input-start-meter"
+                            min="0"
+                            step="0.01"
+                            oninput="validateStartForm()"
+                            placeholder="Contoh: 1452.80"
+                            class="nb-input w-full px-3.5 py-2.5 text-base font-mono-code pr-14"
+                        >
+                        <span class="absolute right-4 top-1/2 -translate-y-1/2 font-mono-code font-extrabold text-xs text-neutral-500">kWh</span>
+                    </div>
+                </div>
+
+                <!-- Field C: Wajib Foto Meteran Listrik Awal -->
+                <div>
+                    <label class="block text-xs font-extrabold uppercase mb-1">
+                        3. Foto Meteran Listrik Awal <span class="text-red-600">*WAJIB KAMERA/FOTO</span>
+                    </label>
+                    <label for="input-start-photo" class="nb-btn bg-[#7DD3FC] text-[#111827] w-full py-3 px-4 text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer">
+                        <span class="text-lg">📷</span>
+                        <span id="start-photo-btn-label">Ambil Foto Meteran Awal (Kamera HP)</span>
+                    </label>
+                    <input
+                        type="file"
+                        id="input-start-photo"
+                        accept="image/*"
+                        capture="environment"
+                        onchange="handleStartPhotoChange(event)"
+                        class="hidden"
+                    >
+
+                    <!-- Photo Preview Box -->
+                    <div id="start-photo-preview-box" class="hidden mt-3 nb-card-sm p-2.5 bg-[#FAF9F6]">
+                        <div class="flex items-center justify-between text-[11px] font-bold mb-1.5">
+                            <span class="text-emerald-800">✅ Foto Meteran Awal Siap (Terkompresi)</span>
+                            <span id="start-photo-size" class="font-mono-code text-neutral-600">0 KB</span>
+                        </div>
+                        <img id="start-photo-preview-img" src="" alt="Preview Meteran Awal" class="w-full h-44 object-cover rounded-lg border-2 border-[#111827]">
+                    </div>
+                </div>
+
+                <!-- Validation Hint -->
+                <div id="start-validation-msg" class="text-xs font-bold text-red-700 bg-red-50 border-2 border-red-700 rounded-lg p-2.5">
+                    ⚠️ Lengkapi Sisa Baterai (%), Angka Meteran Awal (kWh), dan Foto Meteran Awal untuk mengaktifkan tombol Mulai Cas.
+                </div>
+
+                <!-- Submit Button -->
+                <button
+                    id="btn-confirm-start"
+                    onclick="confirmStartCharge()"
+                    disabled
+                    class="nb-btn bg-[#BEF264] text-[#111827] w-full py-3.5 px-4 text-sm sm:text-base flex items-center justify-center gap-2"
+                >
+                    <span>⚡</span>
+                    <span>KONFIRMASI START CHARGE</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- MODAL 2: STOP CHARGE MODAL (STRICT VALIDATION + CALCULATION SUMMARY)  -->
+    <!-- ===================================================================== -->
+    <div id="modal-stop-charge" class="fixed inset-0 z-50 hidden bg-black/75 flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
+        <div class="nb-card w-full sm:max-w-lg bg-[#FFFFFF] rounded-b-none sm:rounded-b-2xl max-h-[94vh] overflow-y-auto">
+            <div class="p-4 bg-[#EF4444] text-white border-b-3 border-[#111827] flex items-center justify-between sticky top-0 z-10">
+                <div>
+                    <span class="nb-badge bg-[#111827] text-[#FDE047] px-2 py-0.5 text-[10px]">LANGKAH 2 • SELESAI CAS</span>
+                    <h3 class="font-display font-bold text-lg mt-0.5">AKHIRI PENGECASAN (STOP CHARGE)</h3>
+                </div>
+                <button onclick="closeStopChargeModal()" class="nb-btn bg-white text-[#111827] px-3 py-1.5 text-xs">✕</button>
+            </div>
+
+            <div class="p-4 sm:p-5 space-y-4">
+                <!-- Live Stop Timestamp & Start Reference -->
+                <div class="nb-card-sm p-3 bg-[#FAF9F6] space-y-1 text-xs">
+                    <div class="flex justify-between">
+                        <span class="font-bold text-neutral-600">Timestamp Selesai:</span>
+                        <span id="stop-modal-live-ts" class="font-mono-code font-extrabold text-[#111827]">—</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="font-bold text-neutral-600">Data Awal Sesi:</span>
+                        <span id="stop-modal-start-ref" class="font-mono-code font-bold text-neutral-800">—</span>
+                    </div>
+                </div>
+
+                <!-- Field A: Persentase Baterai Akhir Mobil (%) -->
+                <div>
+                    <label for="input-stop-soc" class="block text-xs font-extrabold uppercase mb-1">
+                        1. Persentase Baterai Akhir Mobil (%) <span class="text-red-600">*WAJIB</span>
+                    </label>
+                    <div class="relative">
+                        <input
+                            type="number"
+                            id="input-stop-soc"
+                            min="1"
+                            max="100"
+                            step="1"
+                            oninput="validateStopForm()"
+                            placeholder="Contoh: 80"
+                            class="nb-input w-full px-3.5 py-2.5 text-base font-mono-code pr-12"
+                        >
+                        <span class="absolute right-4 top-1/2 -translate-y-1/2 font-mono-code font-extrabold text-sm text-neutral-500">%</span>
+                    </div>
+                </div>
+
+                <!-- Field B: Angka Meteran Listrik Akhir (kWh) -->
+                <div>
+                    <label for="input-stop-meter" class="block text-xs font-extrabold uppercase mb-1">
+                        2. Angka Meteran Listrik Akhir (kWh) <span class="text-red-600">*WAJIB</span>
+                    </label>
+                    <div class="relative">
+                        <input
+                            type="number"
+                            id="input-stop-meter"
+                            min="0"
+                            step="0.01"
+                            oninput="validateStopForm()"
+                            placeholder="Harus >= meteran awal"
+                            class="nb-input w-full px-3.5 py-2.5 text-base font-mono-code pr-14"
+                        >
+                        <span class="absolute right-4 top-1/2 -translate-y-1/2 font-mono-code font-extrabold text-xs text-neutral-500">kWh</span>
+                    </div>
+                </div>
+
+                <!-- Field C: Wajib Foto Meteran Listrik Akhir -->
+                <div>
+                    <label class="block text-xs font-extrabold uppercase mb-1">
+                        3. Foto Meteran Listrik Akhir <span class="text-red-600">*WAJIB KAMERA/FOTO</span>
+                    </label>
+                    <label for="input-stop-photo" class="nb-btn bg-[#FDE047] text-[#111827] w-full py-3 px-4 text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer">
+                        <span class="text-lg">📷</span>
+                        <span id="stop-photo-btn-label">Ambil Foto Meteran Akhir (Kamera HP)</span>
+                    </label>
+                    <input
+                        type="file"
+                        id="input-stop-photo"
+                        accept="image/*"
+                        capture="environment"
+                        onchange="handleStopPhotoChange(event)"
+                        class="hidden"
+                    >
+
+                    <div id="stop-photo-preview-box" class="hidden mt-3 nb-card-sm p-2.5 bg-[#FAF9F6]">
+                        <div class="flex items-center justify-between text-[11px] font-bold mb-1.5">
+                            <span class="text-emerald-800">✅ Foto Meteran Akhir Siap (Terkompresi)</span>
+                            <span id="stop-photo-size" class="font-mono-code text-neutral-600">0 KB</span>
+                        </div>
+                        <img id="stop-photo-preview-img" src="" alt="Preview Meteran Akhir" class="w-full h-44 object-cover rounded-lg border-2 border-[#111827]">
+                    </div>
+                </div>
+
+                <!-- Real-Time Calculation Preview Before Saving -->
+                <div id="stop-calc-preview" class="hidden nb-card-sm p-3.5 bg-[#BEF264]/45 space-y-1.5 text-xs">
+                    <div class="font-display font-bold uppercase text-[#111827] border-b border-[#111827] pb-1">
+                        📊 Ringkasan Kalkulasi Realisasi Sesi Ini:
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 pt-1">
+                        <div>
+                            <span class="text-neutral-700 font-semibold">Penambahan Baterai:</span>
+                            <div id="calc-delta-soc" class="font-mono-code font-extrabold text-sm">+0%</div>
+                        </div>
+                        <div>
+                            <span class="text-neutral-700 font-semibold">Total kWh PLN:</span>
+                            <div id="calc-delta-kwh" class="font-mono-code font-extrabold text-sm">0.00 kWh</div>
+                        </div>
+                        <div>
+                            <span class="text-neutral-700 font-semibold">Biaya Listrik Realisasi:</span>
+                            <div id="calc-cost-rp" class="font-mono-code font-extrabold text-sm text-emerald-900">Rp0</div>
+                        </div>
+                        <div>
+                            <span class="text-neutral-700 font-semibold">Efisiensi Pengisian:</span>
+                            <div id="calc-efficiency" class="font-mono-code font-extrabold text-sm">0.0%</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Validation Message -->
+                <div id="stop-validation-msg" class="text-xs font-bold text-red-700 bg-red-50 border-2 border-red-700 rounded-lg p-2.5">
+                    ⚠️ Lengkapi Baterai Akhir (%), Angka Meteran Akhir (>= meteran awal), dan Foto Meteran Akhir untuk menyimpan sesi.
+                </div>
+
+                <!-- Confirm Stop Button -->
+                <button
+                    id="btn-confirm-stop"
+                    onclick="confirmStopCharge()"
+                    disabled
+                    class="nb-btn bg-[#BEF264] text-[#111827] w-full py-3.5 px-4 text-sm sm:text-base flex items-center justify-center gap-2"
+                >
+                    <span>✅</span>
+                    <span>SIMPAN & AKHIRI SESI CAS</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- MODAL 3: FULLSCREEN PHOTO VIEWER MODAL                                -->
+    <!-- ===================================================================== -->
+    <div id="modal-photo-viewer" onclick="closePhotoViewer()" class="fixed inset-0 z-[60] hidden bg-black/90 flex flex-col items-center justify-center p-4">
+        <div onclick="event.stopPropagation()" class="nb-card max-w-2xl w-full bg-[#111827] text-white overflow-hidden">
+            <div class="p-3 bg-[#111827] border-b-2 border-neutral-700 flex items-center justify-between gap-2">
+                <span id="photo-viewer-caption" class="font-mono-code text-xs font-bold text-[#BEF264] truncate">Bukti Foto Meteran</span>
+                <button onclick="closePhotoViewer()" class="nb-btn bg-[#FDE047] text-[#111827] px-3 py-1 text-xs">Tutup ✕</button>
+            </div>
+            <div class="bg-black flex items-center justify-center max-h-[78vh] overflow-auto">
+                <img id="photo-viewer-img" src="" alt="Bukti Foto Meteran Fullscreen" class="max-w-full max-h-[76vh] object-contain">
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- MODAL 4: ANDROID PWA INSTALL GUIDE MODAL                              -->
+    <!-- ===================================================================== -->
+    <div id="modal-install-pwa" class="fixed inset-0 z-50 hidden bg-black/75 flex items-center justify-center p-4">
+        <div class="nb-card max-w-md w-full bg-[#FFFFFF] overflow-hidden">
+            <div class="p-4 bg-[#BEF264] border-b-3 border-[#111827] flex items-center justify-between">
+                <h3 class="font-display font-bold text-base sm:text-lg">📲 PASANG DI LAYAR UTAMA ANDROID</h3>
+                <button onclick="closeInstallModal()" class="nb-btn bg-white px-2.5 py-1 text-xs">✕</button>
+            </div>
+            <div class="p-4 sm:p-5 space-y-3 text-xs sm:text-sm">
+                <p class="font-semibold text-neutral-800">
+                    Jadikan <b>Atto 1 Charge Logbook</b> aplikasi mandiri di HP Android Anda agar bisa dibuka layar penuh tanpa address bar:
+                </p>
+                <ol class="space-y-2.5 font-semibold text-neutral-800 list-decimal pl-5">
+                    <li>Buka file/halaman ini di <b>Google Chrome Android</b>.</li>
+                    <li>Ketuk ikon menu <b>Titik Tiga (⋮)</b> di sudut kanan atas Chrome.</li>
+                    <li>Pilih <b>"Tambahkan ke Layar Utama"</b> (<i>Add to Home screen</i>) atau <b>"Install App"</b>.</li>
+                    <li>Ketuk <b>Tambah / Install</b> — ikon petir ⚡ akan muncul di beranda HP Anda dan data tersimpan lokal secara permanen.</li>
+                </ol>
+                <div class="pt-2 flex flex-col gap-2">
+                    <button onclick="triggerNativePWAInstall()" class="nb-btn bg-[#111827] text-[#BEF264] w-full py-3 text-xs">
+                        ⚡ Coba Install Otomatis Sekarang
+                    </button>
+                    <button onclick="closeInstallModal()" class="nb-btn bg-white text-[#111827] w-full py-2.5 text-xs">
+                        Mengerti
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+        <script src="./app.js?v=6861a18cdf"></script>
+</body>
+</html>
