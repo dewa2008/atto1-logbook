@@ -60,6 +60,8 @@
         const RE_TS = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} WIB$/;
         const RE_DUR = /^\d{2,}:\d{2}:\d{2}$/;
         function num(v, min, max) { const n = Number(v); if (!Number.isFinite(n) || n < min || n > max) throw new Error('angka tidak valid'); return n; }
+        function numOrNull(v, min, max) { return (v === null || v === undefined || v === '') ? null : num(v, min, max); }
+        function photoOrEmpty(v) { return (v === null || v === undefined || v === '') ? '' : str(v, RE_PHOTO); }
         function str(v, re) { if (typeof v !== 'string' || !re.test(v)) throw new Error('teks tidak valid'); return v; }
         function cleanActive(s) {
             if (!s) return null;
@@ -67,8 +69,8 @@
                 id: str(s.id, RE_ID), dateKey: str(s.dateKey, RE_DATE),
                 startEpoch: num(s.startEpoch, 0, 1e14), startTimestamp: str(s.startTimestamp, RE_TS),
                 startSOC: num(s.startSOC, 0, 100), targetSOC: num(s.targetSOC, 0, 100),
-                isCalibration: Boolean(s.isCalibration), startMeter: num(s.startMeter, 0, 1e9),
-                startPhotoData: str(s.startPhotoData, RE_PHOTO)
+                isCalibration: Boolean(s.isCalibration), startMeter: numOrNull(s.startMeter, 0, 1e9),
+                startPhotoData: photoOrEmpty(s.startPhotoData)
             };
         }
         function cleanCompleted(s) {
@@ -77,9 +79,9 @@
                 endEpoch: num(s.endEpoch, 0, 1e14), endTimestamp: str(s.endTimestamp, RE_TS),
                 durationSeconds: num(s.durationSeconds, 0, 1e8), durationFormatted: str(s.durationFormatted, RE_DUR),
                 endSOC: num(s.endSOC, 0, 100), deltaSOC: num(s.deltaSOC, -100, 100),
-                endMeter: num(s.endMeter, 0, 1e9), deltaKwh: num(s.deltaKwh, 0, 1e6),
-                costRp: num(s.costRp, 0, 1e12), efficiencyPct: num(s.efficiencyPct, 0, 100),
-                endPhotoData: str(s.endPhotoData, RE_PHOTO)
+                endMeter: numOrNull(s.endMeter, 0, 1e9), deltaKwh: numOrNull(s.deltaKwh, 0, 1e6),
+                costRp: numOrNull(s.costRp, 0, 1e12), efficiencyPct: numOrNull(s.efficiencyPct, 0, 100),
+                endPhotoData: photoOrEmpty(s.endPhotoData)
             });
         }
         function cleanState(obj) {
@@ -91,7 +93,7 @@
             if (!s) return;
             const isStart = which === 'start';
             viewPhotoFullscreen(isStart ? s.startPhotoData : s.endPhotoData,
-                `Sesi #${n} — Meteran ${isStart ? 'Awal' : 'Akhir'} (${(isStart ? s.startMeter : s.endMeter).toFixed(2)} kWh)`);
+                `Sesi #${n} — Meteran ${isStart ? 'Awal' : 'Akhir'} (${fmtKwh(isStart ? s.startMeter : s.endMeter)})`);
         }
 
         // =====================================================================
@@ -290,6 +292,94 @@
             return 'Rp' + Math.round(num).toLocaleString('id-ID');
         }
 
+
+        // ===== Meter helpers + on-device OCR (Tesseract, no network) =====
+        let ocrWorkerPromise = null;
+        let ocrBusy = false;
+        function fmtKwh(v) { return (v === null || v === undefined || !Number.isFinite(Number(v))) ? '—' : `${Number(v).toFixed(2)} kWh`; }
+        function fmtRp(v) { return (v === null || v === undefined || !Number.isFinite(Number(v))) ? '—' : formatRupiah(v); }
+        function readMeterInput(id) {
+            const raw = String(document.getElementById(id).value || '').trim().replace(',', '.');
+            if (raw === '') return null;
+            const n = parseFloat(raw);
+            return (Number.isFinite(n) && n >= 0) ? n : NaN;
+        }
+        function setOcrStatus(id, text, tone) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = text || '';
+            el.className = 'text-[11px] font-bold mt-1.5 ' + (text ? '' : 'hidden ') +
+                (tone === 'ok' ? 'text-emerald-800' : tone === 'warn' ? 'text-amber-800' : 'text-neutral-700');
+        }
+        function getOcrWorker() {
+            if (!ocrWorkerPromise) {
+                ocrWorkerPromise = Tesseract.createWorker('eng', 1, {
+                    workerPath: './ocr/worker.min.js', corePath: './ocr/core', langPath: './ocr/lang',
+                    workerBlobURL: false, gzip: true
+                }).then(async (w) => {
+                    await w.setParameters({ tessedit_char_whitelist: '0123456789.,', tessedit_pageseg_mode: '11' });
+                    return w;
+                }).catch((e) => { ocrWorkerPromise = null; throw e; });
+            }
+            return ocrWorkerPromise;
+        }
+        function preprocessForOcr(dataUrl) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => {
+                    const scale = Math.min(2.5, 1600 / Math.max(img.width, img.height));
+                    const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+                    const c = document.createElement('canvas'); c.width = w; c.height = h;
+                    const ctx = c.getContext('2d'); ctx.drawImage(img, 0, 0, w, h);
+                    const d = ctx.getImageData(0, 0, w, h); const p = d.data;
+                    const hist = new Array(256).fill(0); const g = new Uint8Array(w * h);
+                    for (let i = 0, j = 0; i < p.length; i += 4, j++) { const v = (p[i] * 299 + p[i + 1] * 587 + p[i + 2] * 114) / 1000 | 0; g[j] = v; hist[v]++; }
+                    let sum = 0; for (let t = 0; t < 256; t++) sum += t * hist[t];
+                    let sumB = 0, wB = 0, best = 0, thr = 128; const total = w * h;
+                    for (let t = 0; t < 256; t++) { wB += hist[t]; if (!wB) continue; const wF = total - wB; if (!wF) break; sumB += t * hist[t];
+                        const mB = sumB / wB, mF = (sum - sumB) / wF, between = wB * wF * (mB - mF) * (mB - mF); if (between > best) { best = between; thr = t; } }
+                    let dark = 0; for (let j = 0; j < g.length; j++) if (g[j] < thr) dark++;
+                    const invert = dark > g.length / 2; // keep dark digits on a light background
+                    for (let i = 0, j = 0; i < p.length; i += 4, j++) { let v = g[j] < thr ? 0 : 255; if (invert) v = 255 - v; p[i] = p[i + 1] = p[i + 2] = v; }
+                    ctx.putImageData(d, 0, 0); resolve(c);
+                };
+                img.onerror = reject; img.src = dataUrl;
+            });
+        }
+        function pickMeterNumber(data) {
+            let words = Array.isArray(data.words) ? data.words : [];
+            if (!words.length && Array.isArray(data.blocks)) {
+                data.blocks.forEach(b => (b.paragraphs || []).forEach(pa => (pa.lines || []).forEach(l => (l.words || []).forEach(w => words.push(w)))));
+            }
+            const cands = words.map(w => ({ t: String(w.text || '').replace(/,/g, '.').replace(/[^0-9.]/g, ''), h: w.bbox ? (w.bbox.y1 - w.bbox.y0) : 0, c: w.confidence || 0 }))
+                .filter(x => /^\d{3,7}(\.\d{1,3})?$/.test(x.t))
+                .sort((a, b) => (b.h - a.h) || (b.c - a.c));
+            return cands.length ? cands[0].t : null;
+        }
+        async function runMeterOcr(dataUrl, inputId, statusId, validateFn) {
+            ocrBusy = true; validateFn();
+            setOcrStatus(statusId, '🔎 Membaca angka meteran dari foto...', 'info');
+            try {
+                const worker = await getOcrWorker();
+                const canvas = await preprocessForOcr(dataUrl);
+                const { data } = await worker.recognize(canvas, {}, { text: true, blocks: true });
+                const num = pickMeterNumber(data);
+                const input = document.getElementById(inputId);
+                if (num !== null) {
+                    if (input.dataset.manual !== '1') input.value = num;
+                    setOcrStatus(statusId, input.dataset.manual === '1'
+                        ? `ℹ️ Foto terbaca ${num} kWh, tapi angka ketikan Anda dipakai.`
+                        : `✅ Terbaca dari foto: ${num} kWh. Cek & koreksi bila keliru.`, 'ok');
+                } else {
+                    setOcrStatus(statusId, '⚠️ Angka tidak terbaca. Ketik manual, atau simpan dengan foto saja.', 'warn');
+                }
+            } catch (e) {
+                setOcrStatus(statusId, '⚠️ Pembacaan otomatis gagal. Ketik manual, atau simpan dengan foto saja.', 'warn');
+            } finally {
+                ocrBusy = false; validateFn();
+            }
+        }
+
         // =====================================================================
         // 6. START CHARGE MODAL LOGIC
         // =====================================================================
@@ -310,8 +400,11 @@
         }
 
         function getLastMeterReading() {
-            if (completedSessions.length === 0) return '';
-            return completedSessions[completedSessions.length - 1].endMeter;
+            for (let i = completedSessions.length - 1; i >= 0; i--) {
+                const v = completedSessions[i].endMeter;
+                if (v !== null && v !== undefined && Number.isFinite(Number(v))) return v;
+            }
+            return '';
         }
 
         function openStartChargeModal() {
@@ -330,6 +423,8 @@
 
             const lastMeter = getLastMeterReading();
             document.getElementById('input-start-meter').value = lastMeter !== '' ? lastMeter : '';
+            document.getElementById('input-start-meter').dataset.manual = '0';
+            setOcrStatus('start-ocr-status', '');
 
             const now = new Date();
             const isSaturday = now.getDay() === 6;
@@ -359,6 +454,7 @@
                 document.getElementById('start-photo-preview-box').classList.remove('hidden');
                 document.getElementById('start-photo-btn-label').textContent = 'Ganti Foto Meteran Awal';
                 validateStartForm();
+                runMeterOcr(dataUrl, 'input-start-meter', 'start-ocr-status', validateStartForm);
             } catch (err) {
                 showToast('Gagal Memproses Foto', 'Silakan coba ambil ulang foto meteran listrik Anda.');
             }
@@ -366,30 +462,34 @@
 
         function validateStartForm() {
             const socVal = parseFloat(document.getElementById('input-start-soc').value);
-            const meterVal = parseFloat(document.getElementById('input-start-meter').value);
+            const meterVal = readMeterInput('input-start-meter');
             const hasPhoto = Boolean(startPhotoBase64);
-
             const isSocValid = !isNaN(socVal) && socVal >= 1 && socVal <= 99;
-            const isMeterValid = !isNaN(meterVal) && meterVal >= 0;
+            const meterOk = meterVal !== null && !Number.isNaN(meterVal);
+            const meterBad = Number.isNaN(meterVal);
+            const allValid = isSocValid && !meterBad && (meterOk || hasPhoto) && !ocrBusy;
 
-            const allValid = isSocValid && isMeterValid && hasPhoto;
             const submitBtn = document.getElementById('btn-confirm-start');
             const msgBox = document.getElementById('start-validation-msg');
-
             submitBtn.disabled = !allValid;
-            if (allValid) {
+            if (ocrBusy) {
+                msgBox.className = 'text-xs font-bold text-neutral-800 bg-neutral-50 border-2 border-neutral-700 rounded-lg p-2.5';
+                msgBox.textContent = '⏳ Sedang membaca angka dari foto...';
+            } else if (allValid) {
                 msgBox.className = 'text-xs font-bold text-emerald-900 bg-emerald-50 border-2 border-emerald-700 rounded-lg p-2.5';
-                msgBox.textContent = '✅ Semua data wajib & foto meteran awal lengkap. Siap mengunci timestamp mulai!';
+                msgBox.textContent = meterOk
+                    ? (hasPhoto ? '✅ Angka meteran + foto bukti lengkap. Siap mulai!' : '✅ Siap mulai (tanpa foto).')
+                    : '✅ Siap mulai dengan foto saja. Angka kWh tidak tercatat, jadi biaya sesi ini tidak dihitung.';
             } else {
                 msgBox.className = 'text-xs font-bold text-red-700 bg-red-50 border-2 border-red-700 rounded-lg p-2.5';
-                msgBox.textContent = '⚠️ Lengkapi Sisa Baterai (%), Angka Meteran Awal (kWh), dan Foto Meteran Awal untuk mengaktifkan tombol Mulai Cas.';
+                msgBox.textContent = '⚠️ Isi Sisa Baterai (%), lalu isi Angka Meteran ATAU ambil Foto Meteran.';
             }
         }
 
         async function confirmStartCharge() {
             const socVal = parseInt(document.getElementById('input-start-soc').value, 10);
-            const meterVal = parseFloat(document.getElementById('input-start-meter').value);
-            if (isNaN(socVal) || isNaN(meterVal) || !startPhotoBase64) return;
+            const meterVal = readMeterInput('input-start-meter');
+            if (isNaN(socVal) || Number.isNaN(meterVal) || (meterVal === null && !startPhotoBase64) || ocrBusy) return;
 
             const now = new Date();
             const isSaturday = now.getDay() === 6;
@@ -404,16 +504,16 @@
                 targetSOC: targetSOC,
                 isCalibration: targetSOC === 100,
                 startMeter: meterVal,
-                startPhotoData: startPhotoBase64
+                startPhotoData: startPhotoBase64 || ''
             };
 
             await savePersistedState();
             closeStartChargeModal();
             updateUIState();
-            showToast(
-                'Sesi Cas Dimulai! ⚡',
-                `Timestamp ${activeSession.startTimestamp} & foto meteran awal (${meterVal} kWh) berhasil dikunci.`
-            );
+            const parts = [];
+            if (meterVal !== null) parts.push(`meteran ${meterVal} kWh`);
+            if (startPhotoBase64) parts.push('foto');
+            showToast('Sesi Cas Dimulai! ⚡', `Timestamp ${activeSession.startTimestamp} & ${parts.join(' + ')} berhasil dikunci.`);
         }
 
         // =====================================================================
@@ -427,19 +527,20 @@
             document.getElementById('stop-photo-preview-box').classList.add('hidden');
             document.getElementById('stop-calc-preview').classList.add('hidden');
             document.getElementById('stop-photo-btn-label').textContent = 'Ambil Foto Meteran Akhir (Kamera HP)';
+            setOcrStatus('stop-ocr-status', '');
 
-            // Suggest estimated SOC based on elapsed time
             const elapsedHours = (Date.now() - activeSession.startEpoch) / (1000 * 3600);
             const estSocNow = Math.min(100, Math.round(activeSession.startSOC + elapsedHours * PCT_PER_HOUR));
             document.getElementById('input-stop-soc').value = estSocNow;
 
-            // Suggest estimated meter reading
-            const estKwhAdded = elapsedHours * CHARGER_KW;
-            document.getElementById('input-stop-meter').value = (activeSession.startMeter + estKwhAdded).toFixed(2);
+            const meterInput = document.getElementById('input-stop-meter');
+            meterInput.dataset.manual = '0';
+            meterInput.value = activeSession.startMeter !== null
+                ? (activeSession.startMeter + elapsedHours * CHARGER_KW).toFixed(2) : '';
 
             document.getElementById('stop-modal-live-ts').textContent = formatTimestampWIB(new Date());
             document.getElementById('stop-modal-start-ref').textContent =
-                `SOC ${activeSession.startSOC}% • Meteran ${activeSession.startMeter.toFixed(2)} kWh`;
+                `SOC ${activeSession.startSOC}% • Meteran ${fmtKwh(activeSession.startMeter)}`;
 
             validateStopForm();
             document.getElementById('modal-stop-charge').classList.remove('hidden');
@@ -461,6 +562,7 @@
                 document.getElementById('stop-photo-preview-box').classList.remove('hidden');
                 document.getElementById('stop-photo-btn-label').textContent = 'Ganti Foto Meteran Akhir';
                 validateStopForm();
+                runMeterOcr(dataUrl, 'input-stop-meter', 'stop-ocr-status', validateStopForm);
             } catch (err) {
                 showToast('Gagal Memproses Foto', 'Silakan ambil ulang foto meteran akhir Anda.');
             }
@@ -470,40 +572,52 @@
             if (!activeSession) return;
 
             const endSoc = parseFloat(document.getElementById('input-stop-soc').value);
-            const endMeter = parseFloat(document.getElementById('input-stop-meter').value);
+            const endMeter = readMeterInput('input-stop-meter');
             const hasPhoto = Boolean(stopPhotoBase64);
+            const startMeter = activeSession.startMeter;
 
             const isSocValid = !isNaN(endSoc) && endSoc >= activeSession.startSOC && endSoc <= 100;
-            const isMeterValid = !isNaN(endMeter) && endMeter >= activeSession.startMeter;
+            const meterOk = endMeter !== null && !Number.isNaN(endMeter) && (startMeter === null || endMeter >= startMeter);
+            const meterBad = Number.isNaN(endMeter) || (endMeter !== null && startMeter !== null && endMeter < startMeter);
 
             const previewBox = document.getElementById('stop-calc-preview');
-            if (!isNaN(endSoc) && !isNaN(endMeter) && endMeter >= activeSession.startMeter) {
+            if (!isNaN(endSoc) && endSoc >= activeSession.startSOC) {
                 const deltaSoc = Math.max(0, endSoc - activeSession.startSOC);
-                const deltaKwh = endMeter - activeSession.startMeter;
-                const costRp = deltaKwh * PLN_TARIFF_R2;
-                const batteryKwhGained = (deltaSoc / 100) * BATTERY_KWH;
-                const efficiencyPct = deltaKwh > 0 ? Math.min(100, (batteryKwhGained / deltaKwh) * 100) : 0;
-
                 document.getElementById('calc-delta-soc').textContent = `+${deltaSoc}% (${activeSession.startSOC}% ➔ ${endSoc}%)`;
-                document.getElementById('calc-delta-kwh').textContent = `${deltaKwh.toFixed(2)} kWh`;
-                document.getElementById('calc-cost-rp').textContent = formatRupiah(costRp);
-                document.getElementById('calc-efficiency').textContent = `${efficiencyPct.toFixed(1)}%`;
+                if (meterOk && startMeter !== null) {
+                    const deltaKwh = endMeter - startMeter;
+                    const batteryKwhGained = (deltaSoc / 100) * BATTERY_KWH;
+                    const efficiencyPct = deltaKwh > 0 ? Math.min(100, (batteryKwhGained / deltaKwh) * 100) : 0;
+                    document.getElementById('calc-delta-kwh').textContent = `${deltaKwh.toFixed(2)} kWh`;
+                    document.getElementById('calc-cost-rp').textContent = formatRupiah(deltaKwh * PLN_TARIFF_R2);
+                    document.getElementById('calc-efficiency').textContent = `${efficiencyPct.toFixed(1)}%`;
+                } else {
+                    document.getElementById('calc-delta-kwh').textContent = '— (butuh angka awal & akhir)';
+                    document.getElementById('calc-cost-rp').textContent = '—';
+                    document.getElementById('calc-efficiency').textContent = '—';
+                }
                 previewBox.classList.remove('hidden');
             } else {
                 previewBox.classList.add('hidden');
             }
 
-            const allValid = isSocValid && isMeterValid && hasPhoto;
+            const allValid = isSocValid && !meterBad && (meterOk || hasPhoto) && !ocrBusy;
             const btn = document.getElementById('btn-confirm-stop');
             const msgBox = document.getElementById('stop-validation-msg');
-
             btn.disabled = !allValid;
-            if (allValid) {
+            if (ocrBusy) {
+                msgBox.className = 'text-xs font-bold text-neutral-800 bg-neutral-50 border-2 border-neutral-700 rounded-lg p-2.5';
+                msgBox.textContent = '⏳ Sedang membaca angka dari foto...';
+            } else if (allValid) {
                 msgBox.className = 'text-xs font-bold text-emerald-900 bg-emerald-50 border-2 border-emerald-700 rounded-lg p-2.5';
-                msgBox.textContent = '✅ Validasi lengkap! Klik Simpan & Akhiri Sesi Cas untuk mencatat realisasi permanen.';
+                msgBox.textContent = (meterOk && startMeter !== null)
+                    ? '✅ Validasi lengkap! Klik Simpan & Akhiri Sesi Cas.'
+                    : '✅ Bisa disimpan. Biaya & kWh tidak dihitung karena angka meteran awal/akhir tidak lengkap.';
             } else {
                 msgBox.className = 'text-xs font-bold text-red-700 bg-red-50 border-2 border-red-700 rounded-lg p-2.5';
-                msgBox.textContent = `⚠️ Pastikan Baterai Akhir (${activeSession.startSOC}%–100%), Angka Meteran Akhir (>= ${activeSession.startMeter} kWh), dan Foto Meteran Akhir sudah terisi.`;
+                msgBox.textContent = meterBad && startMeter !== null
+                    ? `⚠️ Angka meteran akhir harus ≥ ${startMeter} kWh.`
+                    : `⚠️ Isi Baterai Akhir (${activeSession.startSOC}%–100%), lalu isi Angka Meteran Akhir ATAU ambil Foto Meteran.`;
             }
         }
 
@@ -511,16 +625,20 @@
             if (!activeSession) return;
 
             const endSoc = parseInt(document.getElementById('input-stop-soc').value, 10);
-            const endMeter = parseFloat(document.getElementById('input-stop-meter').value);
-            if (isNaN(endSoc) || isNaN(endMeter) || endMeter < activeSession.startMeter || !stopPhotoBase64) return;
+            const endMeter = readMeterInput('input-stop-meter');
+            const startMeter = activeSession.startMeter;
+            if (isNaN(endSoc) || Number.isNaN(endMeter) || ocrBusy) return;
+            if (endMeter === null && !stopPhotoBase64) return;
+            if (endMeter !== null && startMeter !== null && endMeter < startMeter) return;
 
             const now = new Date();
             const durationSeconds = Math.max(1, Math.round((now.getTime() - activeSession.startEpoch) / 1000));
             const deltaSoc = endSoc - activeSession.startSOC;
-            const deltaKwh = Number((endMeter - activeSession.startMeter).toFixed(3));
-            const costRp = deltaKwh * PLN_TARIFF_R2;
+            const hasKwh = endMeter !== null && startMeter !== null;
+            const deltaKwh = hasKwh ? Number((endMeter - startMeter).toFixed(3)) : null;
+            const costRp = hasKwh ? deltaKwh * PLN_TARIFF_R2 : null;
             const batteryKwhGained = (deltaSoc / 100) * BATTERY_KWH;
-            const efficiencyPct = deltaKwh > 0 ? Number(Math.min(100, (batteryKwhGained / deltaKwh) * 100).toFixed(1)) : 92.0;
+            const efficiencyPct = (hasKwh && deltaKwh > 0) ? Number(Math.min(100, (batteryKwhGained / deltaKwh) * 100).toFixed(1)) : null;
 
             const finishedRecord = {
                 ...activeSession,
@@ -534,7 +652,7 @@
                 deltaKwh: deltaKwh,
                 costRp: costRp,
                 efficiencyPct: efficiencyPct,
-                endPhotoData: stopPhotoBase64
+                endPhotoData: stopPhotoBase64 || ''
             };
 
             completedSessions.push(finishedRecord);
@@ -544,10 +662,9 @@
             closeStopChargeModal();
             updateUIState();
 
-            showToast(
-                'Sesi Cas Tersimpan Permanen! ✅',
-                `Terisi +${deltaSoc}% (${deltaKwh.toFixed(2)} kWh PLN • ${formatRupiah(costRp)}). Jadwal 1 tahun telah diperbarui.`
-            );
+            showToast('Sesi Cas Tersimpan Permanen! ✅', hasKwh
+                ? `Terisi +${deltaSoc}% (${deltaKwh.toFixed(2)} kWh PLN • ${formatRupiah(costRp)}). Jadwal 1 tahun telah diperbarui.`
+                : `Terisi +${deltaSoc}%. kWh & biaya tidak dihitung (angka meteran tidak lengkap).`);
         }
 
         // =====================================================================
@@ -604,8 +721,8 @@
                     statusType = 'REALIZED';
                     startSOC = realized.startSOC;
                     endSOC = realized.endSOC;
-                    durationStr = `${realized.durationFormatted} (${realized.deltaKwh.toFixed(2)} kWh)`;
-                    noteStr = `Terealisasi: ${realized.startSOC}% ➔ ${realized.endSOC}% • Biaya ${formatRupiah(realized.costRp)} • Meteran ${realized.startMeter} ➔ ${realized.endMeter} kWh.`;
+                    durationStr = `${realized.durationFormatted} (${fmtKwh(realized.deltaKwh)})`;
+                    noteStr = `Terealisasi: ${realized.startSOC}% ➔ ${realized.endSOC}% • Biaya ${fmtRp(realized.costRp)} • Meteran ${fmtKwh(realized.startMeter)} ➔ ${fmtKwh(realized.endMeter)}.`;
                 } else {
                     const isChargeDay = (i % 2 === 0);
                     if (isChargeDay) {
@@ -715,14 +832,33 @@
                         <div class="text-3xl">📸</div>
                         <h4 class="font-display font-bold text-base">Belum Ada Riwayat Sesi Pengecasan</h4>
                         <p class="text-xs font-semibold text-neutral-600 max-w-md mx-auto">
-                            Tekan tombol <b>MULAI CAS (START CHARGE)</b> di bagian atas saat Anda mulai mencolok charger BYD Atto 1, lalu foto meteran listrik kWh Anda.
+                            Tekan tombol <b>MULAI CAS (START CHARGE)</b> saat mulai mencolok charger, lalu ketik angka meteran atau foto meteran listrik Anda.
                         </p>
                     </div>
                 `;
                 return;
             }
 
-            // Show newest first
+            const photoBlock = (s, which, n) => {
+                const isStart = which === 'start';
+                const photo = isStart ? s.startPhotoData : s.endPhotoData;
+                const meter = isStart ? s.startMeter : s.endMeter;
+                const bg = isStart ? 'bg-[#F0F9FF]' : 'bg-[#FEF9C3]';
+                const label = isStart ? 'Meteran Awal' : 'Meteran Akhir';
+                const media = photo
+                    ? `<img src="${photo}" alt="Foto ${label}" onclick="viewSessionPhoto('${s.id}', '${which}', ${n})" class="w-full h-40 object-cover rounded-lg border-2 border-[#111827] cursor-pointer">`
+                    : `<div class="w-full h-40 rounded-lg border-2 border-dashed border-[#111827] flex items-center justify-center text-xs font-bold text-neutral-500">Tanpa foto (angka diketik)</div>`;
+                const zoom = photo ? `<button onclick="viewSessionPhoto('${s.id}', '${which}', ${n})" class="underline text-blue-700 text-[11px]">Zoom</button>` : '';
+                return `
+                    <div class="nb-card-sm p-2.5 ${bg}">
+                        <div class="flex items-center justify-between text-xs font-extrabold mb-1.5">
+                            <span>📷 ${label}: <span class="font-mono-code">${fmtKwh(meter)}</span></span>
+                            ${zoom}
+                        </div>
+                        ${media}
+                    </div>`;
+            };
+
             const reversed = [...completedSessions].reverse();
             container.innerHTML = reversed.map((s, idx) => {
                 const sessionNumber = completedSessions.length - idx;
@@ -735,7 +871,7 @@
                                     ${s.startSOC}% ➔ ${s.endSOC}% (+${s.deltaSOC}%)
                                 </span>
                                 <span class="font-mono-code text-xs font-extrabold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-700">
-                                    ${s.deltaKwh.toFixed(2)} kWh PLN • ${formatRupiah(s.costRp)}
+                                    ${s.deltaKwh !== null ? fmtKwh(s.deltaKwh) + ' PLN' : 'kWh —'} • ${fmtRp(s.costRp)}
                                 </span>
                             </div>
                             <button onclick="deleteSessionRecord('${s.id}', this)" class="text-xs font-bold text-red-600 underline">
@@ -743,7 +879,6 @@
                             </button>
                         </div>
 
-                        <!-- Timestamps & Metrics Grid -->
                         <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
                             <div class="nb-card-sm p-2.5 bg-[#FAF9F6]">
                                 <div class="text-[10px] font-extrabold uppercase text-neutral-500">Mulai Cas</div>
@@ -759,41 +894,13 @@
                             </div>
                             <div class="nb-card-sm p-2.5 bg-[#FAF9F6]">
                                 <div class="text-[10px] font-extrabold uppercase text-neutral-500">Efisiensi Charger</div>
-                                <div class="font-mono-code font-extrabold mt-0.5">${s.efficiencyPct}%</div>
+                                <div class="font-mono-code font-extrabold mt-0.5">${s.efficiencyPct !== null ? s.efficiencyPct + '%' : '—'}</div>
                             </div>
                         </div>
 
-                        <!-- Side-by-Side Meter Photos (Start vs End) -->
                         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div class="nb-card-sm p-2.5 bg-[#F0F9FF]">
-                                <div class="flex items-center justify-between text-xs font-extrabold mb-1.5">
-                                    <span>📷 Meteran Awal: <span class="font-mono-code">${s.startMeter.toFixed(2)} kWh</span></span>
-                                    <button onclick="viewSessionPhoto('${s.id}', 'start', ${sessionNumber})" class="underline text-blue-700 text-[11px]">
-                                        Zoom
-                                    </button>
-                                </div>
-                                <img
-                                    src="${s.startPhotoData}"
-                                    alt="Foto Meteran Awal"
-                                    onclick="viewSessionPhoto('${s.id}', 'start', ${sessionNumber})"
-                                    class="w-full h-40 object-cover rounded-lg border-2 border-[#111827] cursor-pointer"
-                                >
-                            </div>
-
-                            <div class="nb-card-sm p-2.5 bg-[#FEF9C3]">
-                                <div class="flex items-center justify-between text-xs font-extrabold mb-1.5">
-                                    <span>📷 Meteran Akhir: <span class="font-mono-code">${s.endMeter.toFixed(2)} kWh</span></span>
-                                    <button onclick="viewSessionPhoto('${s.id}', 'end', ${sessionNumber})" class="underline text-blue-700 text-[11px]">
-                                        Zoom
-                                    </button>
-                                </div>
-                                <img
-                                    src="${s.endPhotoData}"
-                                    alt="Foto Meteran Akhir"
-                                    onclick="viewSessionPhoto('${s.id}', 'end', ${sessionNumber})"
-                                    class="w-full h-40 object-cover rounded-lg border-2 border-[#111827] cursor-pointer"
-                                >
-                            </div>
+                            ${photoBlock(s, 'start', sessionNumber)}
+                            ${photoBlock(s, 'end', sessionNumber)}
                         </div>
                     </article>
                 `;
@@ -830,8 +937,9 @@
                 document.getElementById('active-target-badge').textContent = `Target: ${activeSession.targetSOC}%`;
                 document.getElementById('active-start-ts').textContent = activeSession.startTimestamp;
                 document.getElementById('active-start-values').textContent =
-                    `SOC ${activeSession.startSOC}% • ${activeSession.startMeter.toFixed(2)} kWh`;
-                document.getElementById('active-start-thumb').src = activeSession.startPhotoData;
+                    `SOC ${activeSession.startSOC}% • ${fmtKwh(activeSession.startMeter)}`;
+                document.getElementById('active-photo-box').classList.toggle('hidden', !activeSession.startPhotoData);
+                if (activeSession.startPhotoData) document.getElementById('active-start-thumb').src = activeSession.startPhotoData;
 
                 const pctNeeded = Math.max(0, activeSession.targetSOC - activeSession.startSOC);
                 const hoursNeeded = pctNeeded / PCT_PER_HOUR;
@@ -855,9 +963,8 @@
             const totalSessions = completedSessions.length;
             const totalKwh = completedSessions.reduce((acc, s) => acc + (s.deltaKwh || 0), 0);
             const totalCost = completedSessions.reduce((acc, s) => acc + (s.costRp || 0), 0);
-            const avgEff = totalSessions > 0
-                ? completedSessions.reduce((acc, s) => acc + (s.efficiencyPct || 92), 0) / totalSessions
-                : 92.0;
+            const effList = completedSessions.map(s => s.efficiencyPct).filter(v => v !== null && v !== undefined && Number.isFinite(Number(v)));
+            const avgEff = effList.length ? effList.reduce((a, b) => a + Number(b), 0) / effList.length : 92.0;
 
             document.getElementById('kpi-total-sessions').textContent = `${totalSessions} Sesi`;
             document.getElementById('kpi-total-kwh').textContent = `Total PLN: ${totalKwh.toFixed(2)} kWh`;

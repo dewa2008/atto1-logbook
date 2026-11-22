@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
     <meta name="referrer" content="no-referrer">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
     <title>BYD Atto 1 Charge Tracker & SoH Logbook</title>
@@ -15,7 +15,7 @@
     <link rel="manifest" href="./manifest.webmanifest">
     <link rel="icon" type="image/png" href="./icons/favicon.png">
     <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
-    <link rel="stylesheet" href="./styles.css?v=6861a18cdf">
+    <link rel="stylesheet" href="./styles.css?v=b9be3a934e">
 </head>
 <body class="min-h-screen pb-24">
 
@@ -81,7 +81,7 @@
                             Estimasi Baterai Mobil Saat Ini: <span id="hero-current-soc" class="font-mono-code bg-[#FEF08A] px-2 py-0.5 rounded border-2 border-[#111827]">38%</span>
                         </h2>
                         <p id="hero-recommendation-text" class="text-xs sm:text-sm font-semibold text-neutral-700 leading-relaxed">
-                            Rencana malam ini: Colok charger <b>1.3 kW (6A)</b> dengan wajib input sisa baterai & foto meteran listrik kWh awal.
+                            Rencana malam ini: Colok charger <b>1.3 kW (6A)</b>, input sisa baterai, lalu ketik angka meteran atau cukup foto meteran (angka dibaca otomatis).
                         </p>
                     </div>
 
@@ -135,7 +135,7 @@
                         <div class="text-[11px] font-extrabold uppercase text-neutral-500">Estimasi Selesai Target</div>
                         <div id="active-est-finish" class="font-mono-code text-xs sm:text-sm font-extrabold text-emerald-800 mt-1">—</div>
                     </div>
-                    <div class="nb-card-sm p-2.5 bg-white flex items-center justify-between gap-2">
+                    <div id="active-photo-box" class="nb-card-sm p-2.5 bg-white flex items-center justify-between gap-2">
                         <div>
                             <div class="text-[11px] font-extrabold uppercase text-neutral-500">Foto Meteran Awal</div>
                             <button onclick="viewPhotoFullscreen(activeSession?.startPhotoData, 'Foto Meteran Awal — ' + activeSession?.startTimestamp)" class="text-xs font-extrabold underline text-blue-700 mt-1">
@@ -393,7 +393,7 @@
                 <!-- Field B: Angka Meteran Listrik Awal (kWh) -->
                 <div>
                     <label for="input-start-meter" class="block text-xs font-extrabold uppercase mb-1">
-                        2. Angka Meteran Listrik Awal (kWh) <span class="text-red-600">*WAJIB</span>
+                        2. Angka Meteran Awal (kWh) <span class="text-neutral-500 normal-case">— ketik ini ATAU foto</span>
                     </label>
                     <div class="relative">
                         <input
@@ -401,7 +401,7 @@
                             id="input-start-meter"
                             min="0"
                             step="0.01"
-                            oninput="validateStartForm()"
+                            inputmode="decimal" oninput="this.dataset.manual=\'1\'; validateStartForm()"
                             placeholder="Contoh: 1452.80"
                             class="nb-input w-full px-3.5 py-2.5 text-base font-mono-code pr-14"
                         >
@@ -412,7 +412,7 @@
                 <!-- Field C: Wajib Foto Meteran Listrik Awal -->
                 <div>
                     <label class="block text-xs font-extrabold uppercase mb-1">
-                        3. Foto Meteran Listrik Awal <span class="text-red-600">*WAJIB KAMERA/FOTO</span>
+                        3. Foto Meteran Awal <span class="text-neutral-500 normal-case">— opsional, angka dibaca otomatis</span>
                     </label>
                     <label for="input-start-photo" class="nb-btn bg-[#7DD3FC] text-[#111827] w-full py-3 px-4 text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer">
                         <span class="text-lg">📷</span>
@@ -435,11 +435,12 @@
                         </div>
                         <img id="start-photo-preview-img" src="" alt="Preview Meteran Awal" class="w-full h-44 object-cover rounded-lg border-2 border-[#111827]">
                     </div>
+                    <p id="start-ocr-status" class="hidden text-[11px] font-bold mt-1.5"></p>
                 </div>
 
                 <!-- Validation Hint -->
                 <div id="start-validation-msg" class="text-xs font-bold text-red-700 bg-red-50 border-2 border-red-700 rounded-lg p-2.5">
-                    ⚠️ Lengkapi Sisa Baterai (%), Angka Meteran Awal (kWh), dan Foto Meteran Awal untuk mengaktifkan tombol Mulai Cas.
+                    ⚠️ Isi Sisa Baterai (%), lalu isi Angka Meteran ATAU ambil Foto Meteran.
                 </div>
 
                 <!-- Submit Button -->
@@ -505,7 +506,7 @@
                 <!-- Field B: Angka Meteran Listrik Akhir (kWh) -->
                 <div>
                     <label for="input-stop-meter" class="block text-xs font-extrabold uppercase mb-1">
-                        2. Angka Meteran Listrik Akhir (kWh) <span class="text-red-600">*WAJIB</span>
+                        2. Angka Meteran Akhir (kWh) <span class="text-neutral-500 normal-case">— ketik ini ATAU foto</span>
                     </label>
                     <div class="relative">
                         <input
@@ -513,7 +514,7 @@
                             id="input-stop-meter"
                             min="0"
                             step="0.01"
-                            oninput="validateStopForm()"
+                            inputmode="decimal" oninput="this.dataset.manual=\'1\'; validateStopForm()"
                             placeholder="Harus >= meteran awal"
                             class="nb-input w-full px-3.5 py-2.5 text-base font-mono-code pr-14"
                         >
@@ -524,7 +525,7 @@
                 <!-- Field C: Wajib Foto Meteran Listrik Akhir -->
                 <div>
                     <label class="block text-xs font-extrabold uppercase mb-1">
-                        3. Foto Meteran Listrik Akhir <span class="text-red-600">*WAJIB KAMERA/FOTO</span>
+                        3. Foto Meteran Akhir <span class="text-neutral-500 normal-case">— opsional, angka dibaca otomatis</span>
                     </label>
                     <label for="input-stop-photo" class="nb-btn bg-[#FDE047] text-[#111827] w-full py-3 px-4 text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer">
                         <span class="text-lg">📷</span>
@@ -546,6 +547,7 @@
                         </div>
                         <img id="stop-photo-preview-img" src="" alt="Preview Meteran Akhir" class="w-full h-44 object-cover rounded-lg border-2 border-[#111827]">
                     </div>
+                    <p id="stop-ocr-status" class="hidden text-[11px] font-bold mt-1.5"></p>
                 </div>
 
                 <!-- Real-Time Calculation Preview Before Saving -->
@@ -575,7 +577,7 @@
 
                 <!-- Validation Message -->
                 <div id="stop-validation-msg" class="text-xs font-bold text-red-700 bg-red-50 border-2 border-red-700 rounded-lg p-2.5">
-                    ⚠️ Lengkapi Baterai Akhir (%), Angka Meteran Akhir (>= meteran awal), dan Foto Meteran Akhir untuk menyimpan sesi.
+                    ⚠️ Isi Baterai Akhir (%), lalu isi Angka Meteran Akhir ATAU ambil Foto Meteran.
                 </div>
 
                 <!-- Confirm Stop Button -->
@@ -638,6 +640,7 @@
         </div>
     </div>
 
-        <script src="./app.js?v=6861a18cdf"></script>
+        <script src="./ocr/tesseract.min.js"></script>
+    <script src="./app.js?v=b9be3a934e"></script>
 </body>
 </html>
